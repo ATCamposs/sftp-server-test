@@ -1,5 +1,4 @@
-// sftp-server-test/downloader.go
-
+// pkg/downloader/downloader.go
 package downloader
 
 import (
@@ -22,12 +21,14 @@ type SFTPDownloader struct {
 	conn   *ssh.Client
 }
 
+// NewSFTPDownloader cria e retorna uma nova instância(ponteiro da instancia) de SFTPDownloader.
 func NewSFTPDownloader(config *config.Config) *SFTPDownloader {
 	return &SFTPDownloader{
 		config: config,
 	}
 }
 
+// Connect estabelece uma conexão com o servidor SFTP.
 func (d *SFTPDownloader) Connect() error {
 	sshConfig := &ssh.ClientConfig{
 		User: d.config.User,
@@ -39,6 +40,7 @@ func (d *SFTPDownloader) Connect() error {
 	}
 
 	conn, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", d.config.Host, d.config.Port), sshConfig)
+	//trata erro como retorno do método
 	if err != nil {
 		return fmt.Errorf("falha ao conectar ao servidor SSH: %w", err)
 	}
@@ -53,6 +55,7 @@ func (d *SFTPDownloader) Connect() error {
 	return nil
 }
 
+// Close recebe o ponteiro do SFTPDownloader e fecha as conexões SFTP e SSH.
 func (d *SFTPDownloader) Close() {
 	if d.client != nil {
 		d.client.Close()
@@ -62,12 +65,15 @@ func (d *SFTPDownloader) Close() {
 	}
 }
 
+// DownloadFiles faz o download de arquivos do diretório remoto.
+// Esta função usa goroutines para download paralelo.
 func (d *SFTPDownloader) DownloadFiles(remoteDir string, maxFiles int) error {
 	files, err := d.client.ReadDir(remoteDir)
 	if err != nil {
 		return fmt.Errorf("falha ao listar arquivos: %w", err)
 	}
 
+	// Ordena os arquivos por data de modificação, do mais recente para o mais antigo.
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].ModTime().After(files[j].ModTime())
 	})
@@ -81,15 +87,18 @@ func (d *SFTPDownloader) DownloadFiles(remoteDir string, maxFiles int) error {
 	jobs := make(chan os.FileInfo, len(files))
 	results := make(chan error, len(files))
 
+	// Inicia os workers (goroutines) (nesse caso 5) para download paralelo.
 	for w := 1; w <= workerCount; w++ {
 		go d.worker(w, jobs, results)
 	}
 
+	// Envia os trabalhos para os workers.
 	for _, file := range files[:min(maxFiles, len(files))] {
 		jobs <- file
 	}
 	close(jobs)
 
+	// Coleta os resultados dos workers.
 	for a := 1; a <= min(maxFiles, len(files)); a++ {
 		if err := <-results; err != nil {
 			log.Error().Err(err).Msg("Erro ao baixar arquivo")
@@ -99,6 +108,7 @@ func (d *SFTPDownloader) DownloadFiles(remoteDir string, maxFiles int) error {
 	return nil
 }
 
+// worker é uma função que executa o download de arquivos em paralelo.
 func (d *SFTPDownloader) worker(id int, jobs <-chan os.FileInfo, results chan<- error) {
 	for file := range jobs {
 		log.Info().
@@ -111,6 +121,7 @@ func (d *SFTPDownloader) worker(id int, jobs <-chan os.FileInfo, results chan<- 
 	}
 }
 
+// downloadFile faz o download de um único arquivo do servidor SFTP.
 func (d *SFTPDownloader) downloadFile(file os.FileInfo) error {
 	remotePath := filepath.Join("/upload", file.Name())
 	localPath := file.Name()
